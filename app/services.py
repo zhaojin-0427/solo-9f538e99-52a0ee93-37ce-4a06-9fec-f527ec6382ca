@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 from . import db as db_module
+from . import trials
 from .solver import Edge, SolveResult, solve
 
 MIN_MINUTES = 1
@@ -162,7 +163,8 @@ def import_credentials(
     existing = {
         row["voucher_no"]: row
         for row in conn.execute(
-            "SELECT id, voucher_no, minutes, locked FROM credentials"
+            "SELECT id, voucher_no, catalog_a, catalog_b, minutes, locked "
+            "FROM credentials"
         )
     }
 
@@ -206,6 +208,20 @@ def import_credentials(
             ),
         )
     db_module.bump_version(conn)
+    if mode == "replace":
+        trials.rebuild_all(conn)
+    else:
+        # A first-ever enablement handles the whole catalogue; otherwise only
+        # the old and new groups touched by these vouchers are rechecked.
+        if trials.ensure_initialized(conn):
+            return result
+        affected: set[str] = set()
+        for row in rows:
+            old = existing.get(row["voucher_no"])
+            affected.update((row["catalog_a"], row["catalog_b"]))
+            if old is not None:
+                affected.update((old["catalog_a"], old["catalog_b"]))
+        trials.update_after_change(conn, affected)
     return result
 
 
@@ -465,6 +481,18 @@ def confirm_plan(conn: sqlite3.Connection, plan_id: int) -> int:
             if cur.rowcount != 1:  # pragma: no cover - version check guards this
                 raise PlanNotConfirmable("确认被拒绝：供数在确认期间发生变化。")
 
+        # Endpoints may have been corrected since the plan was solved; read
+        # them from the catalogue inside this transaction.
+        changed: set[str] = set()
+        for item in items:
+            row = conn.execute(
+                "SELECT catalog_a, catalog_b FROM credentials WHERE id = ?",
+                (item["credential_id"],),
+            ).fetchone()
+            if row is not None:
+                changed.update((row["catalog_a"], row["catalog_b"]))
+        trials.update_after_change(conn, changed)
+
         version = db_module.bump_version(conn)
         cur = conn.execute(
             """
@@ -495,6 +523,41 @@ def result_payload(result: SolveResult) -> str:
         ],
         ensure_ascii=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# Branch-withdrawal trial results (read-only)
+# ---------------------------------------------------------------------------
+
+
+def trial_libraries(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT library_code, catalog_count FROM trial_libraries "
+        "ORDER BY library_code"
+    ).fetchall()
+
+
+def trial_result(
+    conn: sqlite3.Connection, library_code: str
+) -> tuple[int | None, list[sqlite3.Row]]:
+    """Return (catalog_count, affected groups) for one library.
+
+    ``catalog_count`` is None when the code is not in the persisted catalogue.
+    """
+    known = conn.execute(
+        "SELECT catalog_count FROM trial_libraries WHERE library_code = ?",
+        (library_code,),
+    ).fetchone()
+    rows = conn.execute(
+        """
+        SELECT group_key, outcome, original_size, removed_count, remaining_groups
+        FROM trial_results
+        WHERE library_code = ?
+        ORDER BY group_key
+        """,
+        (library_code,),
+    ).fetchall()
+    return (None if known is None else known["catalog_count"]), rows
 
 
 def seed_demo(conn: sqlite3.Connection) -> int:

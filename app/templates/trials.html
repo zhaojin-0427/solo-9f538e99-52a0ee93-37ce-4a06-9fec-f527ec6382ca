@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}迁库试算{% endblock %}
+{% block content %}
+<div class="pagehead">
+  <h1>迁库试算</h1>
+  <p class="lede">
+    输入馆代码，查看暂时撤下该馆全部编目号后，会消失或拆开的原同物组。
+    馆代码取编目号第一个 <code>/</code> 前的部分；没有馆代码的旧号保留在目录中。
+    试算只沿有效凭证认定同物关系。
+  </p>
+</div>
+
+<div class="card">
+  <form method="get" action="{{ url_for('main.trials') }}" class="filters">
+    <input type="text" name="library" value="{{ code }}" placeholder="馆代码，例如 CAT-A" autocomplete="off" required aria-label="馆代码">
+    <button type="submit">试算</button>
+    {% if code %}<a class="button secondary" href="{{ url_for('main.trials') }}">清除</a>{% endif %}
+  </form>
+  <p class="muted small" style="margin-bottom: 0;">
+    页面只读取持久化的试算结果，不会改动供数。导入、停用、恢复凭证或确认清单时，
+    系统只回查受影响的新旧同物组。
+  </p>
+</div>
+
+{% if code %}
+  {% if catalog_count is none %}
+    <div class="notice warn">供数中没有馆代码「{{ code }}」的编目号。</div>
+  {% elif not result %}
+    <div class="notice ok">
+      撤下馆代码「{{ code }}」（{{ catalog_count }} 个编目号）后，不会让任何原同物组消失或拆开。
+    </div>
+  {% else %}
+    {% set disappear = result | selectattr('outcome', 'equalto', 'disappear') | list %}
+    {% set split = result | selectattr('outcome', 'equalto', 'split') | list %}
+    <div class="notice bad">
+      撤下馆代码「{{ code }}」（{{ catalog_count }} 个编目号）后，受影响的原同物组共
+      {{ result | length }} 组：消失 {{ disappear | length }} 组，拆开 {{ split | length }} 组。
+    </div>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>原同物组（字典序最小号）</th>
+            <th>结果</th>
+            <th class="num">原组号数</th>
+            <th class="num">撤下号数</th>
+            <th class="num">停供后剩余组数</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in result %}
+          <tr>
+            <td class="mono">{{ row.group_key }}</td>
+            <td>
+              {% if row.outcome == 'disappear' %}
+                <span class="tag tag-bad">消失</span>
+              {% else %}
+                <span class="tag tag-draft">拆开</span>
+              {% endif %}
+            </td>
+            <td class="num">{{ row.original_size }}</td>
+            <td class="num">{{ row.removed_count }}</td>
+            <td class="num">{{ row.remaining_groups }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+{% endif %}
+
+{% if libraries %}
+<div class="card">
+  <h2>当前供数中的馆代码</h2>
+  <p class="muted small">点击馆代码可直接试算。共 {{ libraries | length }} 个馆。</p>
+  <div class="actions">
+    {% for library in libraries %}
+      <a class="button secondary" href="{{ url_for('main.trials', library=library.library_code) }}">
+        {{ library.library_code }}（{{ library.catalog_count }}）
+      </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

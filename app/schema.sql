@@ -72,4 +72,38 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 
+-- Persisted branch-withdrawal trials.  One row per (library, original item
+-- group) that would disappear or split if that library's catalogue numbers
+-- were temporarily withdrawn.  The web page only reads these tables.
+CREATE TABLE IF NOT EXISTS trial_results (
+    library_code     TEXT    NOT NULL,
+    group_key        TEXT    NOT NULL,
+    outcome          TEXT    NOT NULL CHECK (outcome IN ('disappear', 'split')),
+    original_size    INTEGER NOT NULL,
+    removed_count    INTEGER NOT NULL,
+    remaining_groups INTEGER NOT NULL,
+    PRIMARY KEY (library_code, group_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trial_results_group ON trial_results(group_key);
+
+-- Membership of every catalogue number in its original same-item group (the
+-- group as it stands without any library withdrawal).  Used to find the old
+-- groups affected by a catalogue change without rescanning the whole feed.
+CREATE TABLE IF NOT EXISTS trial_group_members (
+    catalog_no TEXT PRIMARY KEY,
+    group_key  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_trial_group_members_key
+    ON trial_group_members(group_key);
+
+-- Catalogue numbers per library code (legacy numbers without a code are not
+-- listed).  Lets the read-only page distinguish an unknown library from a
+-- library with no affected groups.
+CREATE TABLE IF NOT EXISTS trial_libraries (
+    library_code  TEXT    PRIMARY KEY,
+    catalog_count INTEGER NOT NULL
+);
+
 INSERT OR IGNORE INTO meta(key, value) VALUES ('data_version', '0');

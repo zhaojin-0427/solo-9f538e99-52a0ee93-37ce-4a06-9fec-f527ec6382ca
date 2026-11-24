@@ -42,6 +42,10 @@ def init_db() -> None:
     conn.execute(
         "INSERT OR IGNORE INTO meta(key, value) VALUES ('data_version', '0')"
     )
+    from . import trials
+
+    with transaction(conn):
+        trials.ensure_initialized(conn)
 
 
 def get_version(conn: sqlite3.Connection) -> int:

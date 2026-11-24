@@ -20,6 +20,7 @@ from flask import (
 
 from . import db as db_module
 from . import services
+from . import trials as trials_module
 from .services import DomainError, ImportErrorList
 from .worker import get_worker
 
@@ -299,6 +300,12 @@ def restore_credential(credential_id: int):
     conn = db_module.get_db()
     try:
         with db_module.transaction(conn):
+            row = conn.execute(
+                "SELECT catalog_a, catalog_b FROM credentials WHERE id = ?",
+                (credential_id,),
+            ).fetchone()
+            if row is None:
+                raise DomainError("凭证不存在。")
             cur = conn.execute(
                 "UPDATE credentials SET active = 1, updated_at = datetime('now') "
                 "WHERE id = ? AND active = 0",
@@ -306,6 +313,9 @@ def restore_credential(credential_id: int):
             )
             if cur.rowcount != 1:
                 raise DomainError("该凭证已在供数中。")
+            trials_module.update_after_change(
+                conn, (row["catalog_a"], row["catalog_b"])
+            )
             db_module.bump_version(conn)
     except DomainError as exc:
         flash(str(exc), "error")
@@ -459,6 +469,32 @@ def plan_items_csv(plan_id: int):
         mimetype="text/csv; charset=utf-8",
         as_attachment=True,
         download_name=f"plan-{plan_id}.csv",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Branch-withdrawal trials (read-only: results are computed on write)
+# ---------------------------------------------------------------------------
+
+
+@bp.get("/trials")
+def trials():
+    conn = db_module.get_db()
+    code = request.args.get("library", "").strip()
+    libraries = services.trial_libraries(conn)
+    result = None
+    catalog_count = None
+    if code:
+        catalog_count, rows = services.trial_result(conn, code)
+        result = rows
+    return render_template(
+        "trials.html",
+        **_template_context(
+            libraries=libraries,
+            code=code,
+            catalog_count=catalog_count,
+            result=result,
+        ),
     )
 
 
